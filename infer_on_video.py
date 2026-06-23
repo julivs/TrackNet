@@ -29,12 +29,13 @@ def read_video(path_video):
     cap.release()
     return frames, fps
 
-def infer_model(frames, model):
-    """ Run pretrained model on a consecutive list of frames    
+def infer_model(frames, model, device):
+    """ Run pretrained model on a consecutive list of frames
     :params
         frames: list of consecutive video frames
         model: pretrained model
-    :return    
+        device: torch device ('cpu' or 'cuda')
+    :return
         ball_track: list of detected ball points
         dists: list of euclidean distances between two neighbouring ball points
     """
@@ -60,8 +61,8 @@ def infer_model(frames, model):
             dist = distance.euclidean(ball_track[-1], ball_track[-2])
         else:
             dist = -1
-        dists.append(dist)  
-    return ball_track, dists 
+        dists.append(dist)
+    return ball_track, dists
 
 def remove_outliers(ball_track, dists, max_dist = 100):
     """ Remove outliers from model prediction    
@@ -131,59 +132,72 @@ def interpolation(coords):
     track = [*zip(x,y)]
     return track
 
-def write_track(frames, ball_track, path_output_video, fps, trace=7):
-    """ Write .avi file with detected ball tracks
+def write_track(frames, ball_track, path_output_video, fps, trace=15):
+    """ Write video file with detected ball tracks and trail effect
     :params
         frames: list of original video frames
         ball_track: list of ball coordinates
         path_output_video: path to output video
         fps: frames per second
-        trace: number of frames with detected trace
+        trace: number of frames in the trail
     """
     height, width = frames[0].shape[:2]
-    out = cv2.VideoWriter(path_output_video, cv2.VideoWriter_fourcc(*'DIVX'), 
-                          fps, (width, height))
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(path_output_video, fourcc, fps, (width, height))
+    detected = sum(1 for p in ball_track if p[0] is not None)
+    print(f"Frames com bola detectada: {detected}/{len(ball_track)} ({100*detected//len(ball_track)}%)")
     for num in range(len(frames)):
-        frame = frames[num]
+        frame = frames[num].copy()
         for i in range(trace):
-            if (num-i > 0):
-                if ball_track[num-i][0]:
+            if (num - i) >= 0:
+                if ball_track[num-i][0] is not None:
                     x = int(ball_track[num-i][0])
                     y = int(ball_track[num-i][1])
-                    frame = cv2.circle(frame, (x,y), radius=0, color=(0, 0, 255), thickness=10-i)
+                    alpha = (trace - i) / trace
+                    radius = max(2, int(8 * alpha))
+                    thickness = max(1, int(10 * alpha))
+                    color = (0, int(255 * alpha), int(255 * alpha))
+                    cv2.circle(frame, (x, y), radius, color, thickness)
                 else:
                     break
-        out.write(frame) 
-    out.release()    
+        out.write(frame)
+    out.release()
 
 if __name__ == '__main__':
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', type=int, default=2, help='batch size')
-    parser.add_argument('--model_path', type=str, help='path to model')
+    parser.add_argument('--model_path', type=str, help='path to model weights')
     parser.add_argument('--video_path', type=str, help='path to input video')
-    parser.add_argument('--video_out_path', type=str, help='path to output video')
-    parser.add_argument('--extrapolation', action='store_true', help='whether to use ball track extrapolation')
+    parser.add_argument('--video_out_path', type=str, default='output.mp4', help='path to output video (.mp4)')
+    parser.add_argument('--extrapolation', action='store_true', help='interpolate missing ball positions')
+    parser.add_argument('--trace', type=int, default=15, help='number of frames in trail (default: 15)')
     args = parser.parse_args()
-    
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Usando device: {device}")
+
     model = BallTrackerNet()
-    device = 'cuda'
-    model.load_state_dict(torch.load(args.model_path, map_location=device))
+    model.load_state_dict(torch.load(args.model_path, map_location=device, weights_only=False))
     model = model.to(device)
     model.eval()
-    
+
+    print(f"Lendo vídeo: {args.video_path}")
     frames, fps = read_video(args.video_path)
-    ball_track, dists = infer_model(frames, model)
-    ball_track = remove_outliers(ball_track, dists)    
-    
+    print(f"Total de frames: {len(frames)}, FPS: {fps}")
+
+    ball_track, dists = infer_model(frames, model, device)
+    ball_track = remove_outliers(ball_track, dists)
+
     if args.extrapolation:
         subtracks = split_track(ball_track)
         for r in subtracks:
             ball_subtrack = ball_track[r[0]:r[1]]
             ball_subtrack = interpolation(ball_subtrack)
             ball_track[r[0]:r[1]] = ball_subtrack
-        
-    write_track(frames, ball_track, args.video_out_path, fps)    
+
+    write_track(frames, ball_track, args.video_out_path, fps, trace=args.trace)
+    print(f"Vídeo salvo em: {args.video_out_path}")
     
     
     

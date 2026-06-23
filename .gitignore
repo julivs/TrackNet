@@ -1,0 +1,5 @@
+venv/
+videos/
+weights/
+__pycache__/
+*.pyc
