@@ -36,15 +36,18 @@ def postprocess(output, width=640, height=360):
 
 
 def infer_model_onnx(frames, session):
-    height, width = 360, 640
+    infer_h, infer_w = 360, 640
+    orig_h, orig_w = frames[0].shape[:2]
+    scale_x = orig_w / infer_w
+    scale_y = orig_h / infer_h
     dists = [-1] * 2
     ball_track = [(None, None)] * 2
     t0 = time.time()
 
     for num in tqdm(range(2, len(frames))):
-        img       = cv2.resize(frames[num],   (width, height))
-        img_prev  = cv2.resize(frames[num-1], (width, height))
-        img_pre2  = cv2.resize(frames[num-2], (width, height))
+        img       = cv2.resize(frames[num],   (infer_w, infer_h))
+        img_prev  = cv2.resize(frames[num-1], (infer_w, infer_h))
+        img_pre2  = cv2.resize(frames[num-2], (infer_w, infer_h))
         imgs = np.concatenate((img, img_prev, img_pre2), axis=2)
         imgs = imgs.astype(np.float32) / 255.0
         imgs = np.rollaxis(imgs, 2, 0)
@@ -52,6 +55,9 @@ def infer_model_onnx(frames, session):
 
         out = session.run(None, {'input': inp})[0]
         x_pred, y_pred = postprocess(out)
+        if x_pred is not None:
+            x_pred = int(x_pred * scale_x)
+            y_pred = int(y_pred * scale_y)
         ball_track.append((x_pred, y_pred))
 
         if ball_track[-1][0] and ball_track[-2][0]:

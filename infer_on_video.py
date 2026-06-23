@@ -39,14 +39,16 @@ def infer_model(frames, model, device):
         ball_track: list of detected ball points
         dists: list of euclidean distances between two neighbouring ball points
     """
-    height = 360
-    width = 640
+    infer_h, infer_w = 360, 640
+    orig_h, orig_w = frames[0].shape[:2]
+    scale_x = orig_w / infer_w
+    scale_y = orig_h / infer_h
     dists = [-1]*2
     ball_track = [(None,None)]*2
     for num in tqdm(range(2, len(frames))):
-        img = cv2.resize(frames[num], (width, height))
-        img_prev = cv2.resize(frames[num-1], (width, height))
-        img_preprev = cv2.resize(frames[num-2], (width, height))
+        img = cv2.resize(frames[num], (infer_w, infer_h))
+        img_prev = cv2.resize(frames[num-1], (infer_w, infer_h))
+        img_preprev = cv2.resize(frames[num-2], (infer_w, infer_h))
         imgs = np.concatenate((img, img_prev, img_preprev), axis=2)
         imgs = imgs.astype(np.float32)/255.0
         imgs = np.rollaxis(imgs, 2, 0)
@@ -55,6 +57,9 @@ def infer_model(frames, model, device):
         out = model(torch.from_numpy(inp).float().to(device))
         output = out.argmax(dim=1).detach().cpu().numpy()
         x_pred, y_pred = postprocess(output)
+        if x_pred is not None:
+            x_pred = int(x_pred * scale_x)
+            y_pred = int(y_pred * scale_y)
         ball_track.append((x_pred, y_pred))
 
         if ball_track[-1][0] and ball_track[-2][0]:
