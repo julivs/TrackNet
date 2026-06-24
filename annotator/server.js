@@ -98,7 +98,10 @@ app.get('/api/extract', (req, res) => {
       } catch {}
     }
 
-    session = { name: sessionName, sessionDir, framesDir, annotFile, total, annotations };
+    const sessionConfig = { name: sessionName, fps: parseFloat(fps), total };
+    fs.writeFileSync(path.join(sessionDir, 'session.json'), JSON.stringify(sessionConfig));
+
+    session = { name: sessionName, sessionDir, framesDir, annotFile, total, annotations, fps: parseFloat(fps) };
     send({ done: true, total });
     res.end();
   });
@@ -126,6 +129,7 @@ app.get('/api/state', (_req, res) => {
     loaded:      true,
     name:        session.name,
     total:       session.total,
+    fps:         session.fps,
     annotations: session.annotations,
   });
 });
@@ -195,8 +199,93 @@ app.post('/api/session/load', (req, res) => {
     } catch {}
   }
 
-  session = { name, sessionDir, framesDir, annotFile, total, annotations };
+  let fps = 30;
+  const configFile = path.join(sessionDir, 'session.json');
+  if (fs.existsSync(configFile)) {
+    try { fps = JSON.parse(fs.readFileSync(configFile, 'utf8')).fps || 30; } catch {}
+  }
+
+  session = { name, sessionDir, framesDir, annotFile, total, annotations, fps };
   res.json({ ok: true, total });
+});
+
+// ── Crop CSV ─────────────────────────────────────────────────────────────────
+
+app.get('/api/crop/csv', (req, res) => {
+  if (!session) return res.status(400).end();
+  const start = Math.max(0, parseInt(req.query.start) || 0);
+  const end   = Math.min(parseInt(req.query.end ?? session.total - 1), session.total - 1);
+  if (start > end) return res.status(400).json({ error: 'start > end' });
+
+  const rows = ['file name,visibility,x-coordinate,y-coordinate,status'];
+  for (let i = start; i <= end; i++) {
+    const name = String(i - start).padStart(4, '0') + '.jpg';
+    const ann  = session.annotations[i];
+    if (ann?.visibility === 1) rows.push(`${name},1,${ann.x},${ann.y},0`);
+    else rows.push(`${name},0,,,0`);
+  }
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="Label_${start}-${end}.csv"`);
+  res.end(rows.join('\n'));
+});
+
+// ── Crop video (SSE) ──────────────────────────────────────────────────────────
+
+app.get('/api/crop/video', (req, res) => {
+  if (!session) return res.status(400).end();
+  const start = Math.max(0, parseInt(req.query.start) || 0);
+  const end   = Math.min(parseInt(req.query.end ?? session.total - 1), session.total - 1);
+  if (start > end) return res.status(400).end();
+
+  const count    = end - start + 1;
+  const fps      = session.fps || 30;
+  const filename = `crop_${start}_${end}.mp4`;
+  const outPath  = path.join(session.sessionDir, filename);
+
+  res.writeHead(200, {
+    'Content-Type':  'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection':    'keep-alive',
+  });
+  const send = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  send({ total: count });
+
+  const ffmpeg = spawn('ffmpeg', [
+    '-framerate', String(fps),
+    '-start_number', String(start),
+    '-i', path.join(session.framesDir, '%04d.jpg'),
+    '-frames:v', String(count),
+    '-c:v', 'libx264',
+    '-pix_fmt', 'yuv420p',
+    '-movflags', '+faststart',
+    '-progress', 'pipe:1',
+    '-y', '-nostats',
+    outPath,
+  ]);
+
+  ffmpeg.stdout.on('data', chunk => {
+    const m = chunk.toString().match(/frame=\s*(\d+)/);
+    if (m) send({ frame: parseInt(m[1]), total: count });
+  });
+
+  ffmpeg.on('close', code => {
+    if (code !== 0) { send({ error: `ffmpeg encerrou com código ${code}` }); return res.end(); }
+    send({ done: true, file: filename });
+    res.end();
+  });
+
+  req.on('close', () => { try { ffmpeg.kill(); } catch {} });
+});
+
+// ── Crop download ─────────────────────────────────────────────────────────────
+
+app.get('/api/crop/download/:file', (req, res) => {
+  if (!session) return res.status(400).end();
+  const filename = path.basename(req.params.file);
+  const filePath = path.join(session.sessionDir, filename);
+  if (!fs.existsSync(filePath)) return res.status(404).end();
+  res.download(filePath);
 });
 
 // ── Start ────────────────────────────────────────────────────────────────────
