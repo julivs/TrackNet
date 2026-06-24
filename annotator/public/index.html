@@ -224,7 +224,7 @@ annotation-strip canvas { display: block; width: 100%; height: 100%; }
     <button id="btn-undo"   disabled>↩ Desfazer</button>
   </div>
 
-  <div id="hint">← → navegar &nbsp;·&nbsp; Espaço = ausente &nbsp;·&nbsp; U = desfazer &nbsp;·&nbsp; Clique no frame = marcar bola</div>
+  <div id="hint">← → navegar &nbsp;·&nbsp; Espaço = ausente &nbsp;·&nbsp; X = marcar bola &nbsp;·&nbsp; U = desfazer &nbsp;·&nbsp; Clique no frame = marcar bola</div>
   <div id="msg"></div>
 
   <div id="crop-section">
@@ -269,7 +269,9 @@ class FrameCanvas extends HTMLElement {
     this.canvas = document.createElement('canvas');
     this.ctx    = this.canvas.getContext('2d');
     this.appendChild(this.canvas);
-    this.canvas.addEventListener('click', e => this._onClick(e));
+    this.canvas.addEventListener('click',     e => this._onClick(e));
+    this.canvas.addEventListener('mousemove', e => this._cursorPos = this._toCanvas(e));
+    this.canvas.addEventListener('mouseleave',    () => this._cursorPos = null);
   }
 
   // Retorna true se este load foi o mais recente (não stale).
@@ -320,17 +322,21 @@ class FrameCanvas extends HTMLElement {
     ctx.restore();
   }
 
+  markAtCursor() {
+    if (!this._cursorPos) return;
+    this.dispatchEvent(new CustomEvent('ball-marked', { bubbles: true, detail: this._cursorPos }));
+  }
+
   _onClick(e) {
-    const rect   = this.canvas.getBoundingClientRect();
-    const scaleX = this.canvas.width  / rect.width;
-    const scaleY = this.canvas.height / rect.height;
-    this.dispatchEvent(new CustomEvent('ball-marked', {
-      bubbles: true,
-      detail: {
-        x: Math.round((e.clientX - rect.left) * scaleX),
-        y: Math.round((e.clientY - rect.top)  * scaleY),
-      },
-    }));
+    this.dispatchEvent(new CustomEvent('ball-marked', { bubbles: true, detail: this._toCanvas(e) }));
+  }
+
+  _toCanvas(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      x: Math.round((e.clientX - rect.left) * (this.canvas.width  / rect.width)),
+      y: Math.round((e.clientY - rect.top)  * (this.canvas.height / rect.height)),
+    };
   }
 }
 
@@ -661,6 +667,7 @@ document.addEventListener('keydown', async e => {
   if (e.code === 'ArrowLeft')  { e.preventDefault(); await seekTo(state.current - 1); }
   if (e.code === 'Space')      { e.preventDefault(); await markAbsent(); }
   if (e.code === 'KeyU')       { e.preventDefault(); await undoFrame(); }
+  if (e.code === 'KeyX')       { e.preventDefault(); frameCanvas.markAtCursor(); }
 });
 
 // ── Crop ──────────────────────────────────────────────────────────────────
