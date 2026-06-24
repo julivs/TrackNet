@@ -203,6 +203,7 @@ annotation-strip canvas { display: block; width: 100%; height: 100%; }
     <span id="frame-counter">— / —</span>
     <span id="annotated-count">0 anotados</span>
     <button id="btn-back" style="margin-left:auto">← Voltar</button>
+    <button id="btn-reset" class="danger">⊘ Zerar anotações</button>
     <button id="btn-fill-absent">✓ Preencher ausentes</button>
     <button id="btn-export" class="success">⬇ CSV completo</button>
   </div>
@@ -416,6 +417,7 @@ const btnNext      = $('btn-next');
 const btnAbsent    = $('btn-absent');
 const btnUndo      = $('btn-undo');
 const btnExport       = $('btn-export');
+const btnReset        = $('btn-reset');
 const btnFillAbsent   = $('btn-fill-absent');
 const btnBack         = $('btn-back');
 const msgEl        = $('msg');
@@ -601,6 +603,17 @@ btnUndo.addEventListener('click',   undoFrame);
 btnPrev.addEventListener('click',   () => seekTo(state.current - 1));
 btnNext.addEventListener('click',   () => seekTo(state.current + 1));
 btnExport.addEventListener('click', () => { window.location = '/api/export'; });
+
+btnReset.addEventListener('click', async () => {
+  const annotated = state.annotations.filter(Boolean).length;
+  if (annotated === 0) return showMsg('Nenhuma anotação para remover.');
+  if (!confirm(`Remover todas as ${annotated} anotações? Esta ação não pode ser desfeita.`)) return;
+  const res = await fetch('/api/reset', { method: 'POST' }).then(r => r.json());
+  state.annotations = res.annotations;
+  frameCanvas.setAnnotation(null);
+  updateUI();
+  showMsg('Todas as anotações foram removidas.');
+});
 
 btnFillAbsent.addEventListener('click', async () => {
   const unmarked = state.annotations.filter(a => a === null).length;

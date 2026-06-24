@@ -209,6 +209,15 @@ app.post('/api/session/load', (req, res) => {
   res.json({ ok: true, total });
 });
 
+// ── Reset annotations ────────────────────────────────────────────────────────
+
+app.post('/api/reset', (_req, res) => {
+  if (!session) return res.status(400).end();
+  session.annotations = new Array(session.total).fill(null);
+  fs.writeFileSync(session.annotFile, JSON.stringify(session.annotations));
+  res.json({ ok: true, annotations: session.annotations });
+});
+
 // ── Fill absent ──────────────────────────────────────────────────────────────
 
 app.post('/api/fill-absent', (_req, res) => {
