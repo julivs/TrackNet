@@ -209,6 +209,20 @@ app.post('/api/session/load', (req, res) => {
   res.json({ ok: true, total });
 });
 
+// ── Fill absent ──────────────────────────────────────────────────────────────
+
+app.post('/api/fill-absent', (_req, res) => {
+  if (!session) return res.status(400).end();
+  let filled = 0;
+  session.annotations = session.annotations.map(ann => {
+    if (ann !== null) return ann;
+    filled++;
+    return { visibility: 0, x: null, y: null };
+  });
+  fs.writeFileSync(session.annotFile, JSON.stringify(session.annotations));
+  res.json({ filled, annotations: session.annotations });
+});
+
 // ── Crop CSV ─────────────────────────────────────────────────────────────────
 
 app.get('/api/crop/csv', (req, res) => {

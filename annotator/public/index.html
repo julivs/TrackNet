@@ -203,6 +203,7 @@ annotation-strip canvas { display: block; width: 100%; height: 100%; }
     <span id="frame-counter">— / —</span>
     <span id="annotated-count">0 anotados</span>
     <button id="btn-back" style="margin-left:auto">← Voltar</button>
+    <button id="btn-fill-absent">✓ Preencher ausentes</button>
     <button id="btn-export" class="success">⬇ CSV completo</button>
   </div>
 
@@ -414,8 +415,9 @@ const btnPrev      = $('btn-prev');
 const btnNext      = $('btn-next');
 const btnAbsent    = $('btn-absent');
 const btnUndo      = $('btn-undo');
-const btnExport    = $('btn-export');
-const btnBack      = $('btn-back');
+const btnExport       = $('btn-export');
+const btnFillAbsent   = $('btn-fill-absent');
+const btnBack         = $('btn-back');
 const msgEl        = $('msg');
 const cropStart    = $('crop-start');
 const cropEnd      = $('crop-end');
@@ -583,6 +585,17 @@ btnUndo.addEventListener('click',   undoFrame);
 btnPrev.addEventListener('click',   () => seekTo(state.current - 1));
 btnNext.addEventListener('click',   () => seekTo(state.current + 1));
 btnExport.addEventListener('click', () => { window.location = '/api/export'; });
+
+btnFillAbsent.addEventListener('click', async () => {
+  const unmarked = state.annotations.filter(a => a === null).length;
+  if (unmarked === 0) return showMsg('Nenhum frame sem marcação.');
+  if (!confirm(`${unmarked} frame(s) sem marcação serão definidos como ausente. Continuar?`)) return;
+  const res = await fetch('/api/fill-absent', { method: 'POST' }).then(r => r.json());
+  state.annotations = res.annotations;
+  frameCanvas.setAnnotation(state.annotations[state.current]);
+  updateUI();
+  showMsg(`${res.filled} frame(s) preenchidos como ausente.`);
+});
 
 async function markAbsent() {
   await save(state.current, { visibility: 0, x: null, y: null });
