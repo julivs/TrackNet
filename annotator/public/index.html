@@ -432,7 +432,9 @@ const cropDlLink   = $('crop-dl-link');
 const state = { current: 0, total: 0, annotations: [], fps: 30 };
 
 // ── Init ──────────────────────────────────────────────────────────────────
-async function init() {
+
+// Atualiza listas de vídeos e sessões sem redirecionar.
+async function refreshSetup() {
   const videos = await api('/api/videos');
   videoSelect.innerHTML = videos.length
     ? videos.map(v => `<option>${v}</option>`).join('')
@@ -448,6 +450,19 @@ async function init() {
       btn.addEventListener('click', () => loadSession(name));
       sessionsList.appendChild(btn);
     });
+  } else {
+    sessionsList.innerHTML = '<span style="color:var(--muted)">Nenhuma sessão salva.</span>';
+  }
+}
+
+// Na 1ª carga retoma sessão ativa automaticamente.
+// Após "← Voltar" a flag 'onSetup' evita o redirect mesmo com reload.
+async function init() {
+  await refreshSetup();
+
+  if (sessionStorage.getItem('onSetup')) {
+    sessionStorage.removeItem('onSetup');
+    return;
   }
 
   const srv = await api('/api/state');
@@ -532,10 +547,11 @@ function showAnnotation(name) {
   cropEnd.max     = state.total;
 }
 
-btnBack.addEventListener('click', () => {
+btnBack.addEventListener('click', async () => {
+  sessionStorage.setItem('onSetup', '1');
   annotScreen.style.display = 'none';
   setupScreen.style.display = 'flex';
-  init();
+  await refreshSetup();
 });
 
 // ── Navegação ─────────────────────────────────────────────────────────────
