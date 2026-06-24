@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TrackNet · Anotador</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #141414;
+  --surface: #1e1e1e;
+  --border:  #333;
+  --text:    #e0e0e0;
+  --muted:   #666;
+  --accent:  #2a7aff;
+  --danger:  #c0392b;
+  --success: #27ae60;
+  --radius:  6px;
+}
+
+body {
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 16px;
+  gap: 0;
+}
+
+h1 { font-size: .8rem; letter-spacing: 3px; color: var(--muted); text-transform: uppercase; margin-bottom: 24px; }
+h2 { font-size: .85rem; color: var(--muted); margin-bottom: 12px; }
+
+button {
+  font-family: inherit;
+  font-size: .85rem;
+  padding: 7px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: #2a2a2a;
+  color: var(--text);
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+  white-space: nowrap;
+}
+button:hover:not(:disabled) { background: #383838; }
+button:disabled { opacity: .3; cursor: default; }
+button.accent  { background: #1a4a8a; border-color: var(--accent); }
+button.accent:hover:not(:disabled) { background: #2055aa; }
+button.danger  { background: #4a1a1a; border-color: #8a2a2a; }
+button.danger:hover:not(:disabled) { background: #622020; }
+button.success { background: #1a4a2a; border-color: #2a7a3a; }
+button.success:hover:not(:disabled) { background: #206030; }
+
+select, input[type="number"], input[type="text"] {
+  font-family: inherit;
+  font-size: .85rem;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: #222;
+  color: var(--text);
+  outline: none;
+}
+select:focus, input:focus { border-color: var(--accent); }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  width: 100%;
+  max-width: 640px;
+  margin-bottom: 12px;
+}
+
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.col { display: flex; flex-direction: column; gap: 6px; }
+label.field { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: .75rem; }
+
+/* ── Setup screen ─────────────────────────────────────────────────────── */
+#screen-setup { display: flex; flex-direction: column; align-items: center; width: 100%; }
+
+#progress-extraction {
+  width: 100%;
+  max-width: 640px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+#progress-extraction progress {
+  width: 100%;
+  height: 6px;
+  margin-top: 8px;
+  appearance: none;
+  border: none;
+  border-radius: 3px;
+  background: #333;
+}
+#progress-extraction progress::-webkit-progress-bar  { background: #333; border-radius: 3px; }
+#progress-extraction progress::-webkit-progress-value { background: var(--accent); border-radius: 3px; }
+#prog-text { display: block; font-size: .75rem; color: var(--muted); margin-top: 6px; }
+
+.session-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.session-btn  { font-size: .8rem; padding: 5px 12px; }
+
+/* ── Annotation screen ────────────────────────────────────────────────── */
+#screen-annotation {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 1024px;
+  gap: 8px;
+}
+
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+#session-label { font-weight: bold; color: var(--accent); flex: 1; }
+#frame-counter { color: var(--text); }
+#annotated-count { color: var(--success); }
+
+/* frame-canvas web component */
+frame-canvas {
+  display: block;
+  width: 100%;
+  background: #000;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  cursor: crosshair;
+}
+frame-canvas canvas { display: block; width: 100%; height: auto; }
+
+/* annotation-strip web component */
+annotation-strip {
+  display: block;
+  width: 100%;
+  height: 18px;
+  cursor: pointer;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+annotation-strip canvas { display: block; width: 100%; height: 100%; }
+
+#controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+#hint { font-size: .72rem; color: var(--muted); text-align: center; }
+#msg  { font-size: .78rem; color: #f0c040; min-height: 1.2em; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>TrackNet · Anotador de Bola</h1>
+
+<!-- ── Setup screen ────────────────────────────────────────────────────── -->
+<div id="screen-setup">
+
+  <div class="card">
+    <h2>Novo vídeo</h2>
+    <div class="row">
+      <label class="field" style="flex:1">
+        Vídeo
+        <select id="video-select"><option value="">Carregando…</option></select>
+      </label>
+      <label class="field" style="width:90px">
+        FPS anotação
+        <input type="number" id="fps-input" value="30" min="1" max="120">
+      </label>
+      <button id="btn-extract" class="accent" style="align-self:flex-end">Extrair frames</button>
+    </div>
+  </div>
+
+  <div id="progress-extraction" style="display:none">
+    <span id="prog-label">Extraindo frames com ffmpeg…</span>
+    <progress id="prog" value="0" max="100"></progress>
+    <span id="prog-text">0 frames</span>
+  </div>
+
+  <div class="card" id="sessions-card">
+    <h2>Retomar sessão</h2>
+    <div class="session-list" id="sessions-list">
+      <span style="color:var(--muted)">Nenhuma sessão salva.</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Annotation screen ────────────────────────────────────────────────── -->
+<div id="screen-annotation" style="display:none">
+
+  <div id="topbar">
+    <span id="session-label">—</span>
+    <span id="frame-counter">— / —</span>
+    <span id="annotated-count">0 anotados</span>
+    <button id="btn-back" style="margin-left:auto">← Voltar</button>
+    <button id="btn-export" class="success">⬇ Baixar CSV</button>
+  </div>
+
+  <frame-canvas id="frame-canvas"></frame-canvas>
+
+  <annotation-strip id="ann-strip"></annotation-strip>
+
+  <div id="controls">
+    <button id="btn-prev" disabled>◀ Anterior</button>
+    <button id="btn-absent" class="danger" disabled>✕ Ausente</button>
+    <button id="btn-next"  class="accent" disabled>Próximo ▶</button>
+    <button id="btn-undo"  disabled>↩ Desfazer</button>
+  </div>
+
+  <div id="hint">← → navegar &nbsp;·&nbsp; Espaço = ausente &nbsp;·&nbsp; U = desfazer &nbsp;·&nbsp; Clique no frame = marcar bola</div>
+  <div id="msg"></div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Web Component: <frame-canvas>
+// Exibe um frame e captura cliques convertendo para coordenadas originais.
+// ═══════════════════════════════════════════════════════════════════════════
+class FrameCanvas extends HTMLElement {
+  connectedCallback() {
+    this.canvas = document.createElement('canvas');
+    this.ctx    = this.canvas.getContext('2d');
+    this.appendChild(this.canvas);
+    this.canvas.addEventListener('click', e => this._onClick(e));
+  }
+
+  async loadFrame(index) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        this.canvas.width  = img.naturalWidth;
+        this.canvas.height = img.naturalHeight;
+        this.ctx.drawImage(img, 0, 0);
+        this._redrawOverlay();
+        resolve();
+      };
+      img.onerror = reject;
+      img.src = `/api/frame/${index}`;
+    });
+  }
+
+  setAnnotation(ann) {
+    this._ann = ann ?? null;
+    if (this.canvas.width) this._redrawOverlay();
+  }
+
+  _redrawOverlay() {
+    // Re-draw frame then overlay so we don't accumulate circles on repeated calls
+    // (we don't keep the image object — just clear and redraw marker if present)
+    const ann = this._ann;
+    if (!ann || ann.visibility !== 1) return;
+
+    const ctx = this.ctx;
+    const { x, y } = ann;
+    const r  = Math.max(10, this.canvas.width / 70);
+    const lw = Math.max(2,  this.canvas.width / 360);
+
+    ctx.save();
+    ctx.strokeStyle = '#ff3333';
+    ctx.lineWidth   = lw;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x - r * 1.6, y); ctx.lineTo(x + r * 1.6, y);
+    ctx.moveTo(x, y - r * 1.6); ctx.lineTo(x, y + r * 1.6);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  _onClick(e) {
+    const rect   = this.canvas.getBoundingClientRect();
+    const scaleX = this.canvas.width  / rect.width;
+    const scaleY = this.canvas.height / rect.height;
+    const x = Math.round((e.clientX - rect.left) * scaleX);
+    const y = Math.round((e.clientY - rect.top)  * scaleY);
+    this.dispatchEvent(new CustomEvent('ball-marked', { bubbles: true, detail: { x, y } }));
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Web Component: <annotation-strip>
+// Minimap de todos os frames com indicação visual de status de anotação.
+// ═══════════════════════════════════════════════════════════════════════════
+class AnnotationStrip extends HTMLElement {
+  connectedCallback() {
+    this.canvas = document.createElement('canvas');
+    this.ctx    = this.canvas.getContext('2d');
+    this.appendChild(this.canvas);
+
+    this.canvas.addEventListener('click', e => {
+      const rect  = this.canvas.getBoundingClientRect();
+      const ratio = (e.clientX - rect.left) / rect.width;
+      const index = Math.round(ratio * ((this._total || 1) - 1));
+      this.dispatchEvent(new CustomEvent('frame-seek', { bubbles: true, detail: { index } }));
+    });
+
+    this._ro = new ResizeObserver(() => this._draw());
+    this._ro.observe(this);
+  }
+
+  disconnectedCallback() { this._ro?.disconnect(); }
+
+  update(annotations, current, total) {
+    this._annotations = annotations;
+    this._current     = current;
+    this._total       = total;
+    this._draw();
+  }
+
+  _draw() {
+    const w = this.canvas.width  = Math.round(this.getBoundingClientRect().width) || 960;
+    const h = this.canvas.height = 18;
+    const ctx = this.ctx;
+    const t   = this._total || 0;
+
+    ctx.fillStyle = '#2a2a2a';
+    ctx.fillRect(0, 0, w, h);
+
+    if (!t) return;
+
+    const pw = Math.max(1, Math.floor(w / t));
+    (this._annotations || []).forEach((ann, i) => {
+      if (!ann) return;
+      const x = Math.round((i / t) * w);
+      ctx.fillStyle = ann.visibility === 1 ? '#4af060' : '#f04040';
+      ctx.fillRect(x, 2, pw, h - 4);
+    });
+
+    // Current frame cursor
+    const cx = Math.round((this._current / t) * w);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(cx - 1, 0, 2, h);
+  }
+}
+
+customElements.define('frame-canvas',     FrameCanvas);
+customElements.define('annotation-strip', AnnotationStrip);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// App
+// ═══════════════════════════════════════════════════════════════════════════
+
+const $ = id => document.getElementById(id);
+
+const setupScreen  = $('screen-setup');
+const annotScreen  = $('screen-annotation');
+const videoSelect  = $('video-select');
+const fpsInput     = $('fps-input');
+const btnExtract   = $('btn-extract');
+const progEl       = $('progress-extraction');
+const prog         = $('prog');
+const progText     = $('prog-text');
+const sessionsList = $('sessions-list');
+const frameCanvas  = $('frame-canvas');
+const annStrip     = $('ann-strip');
+const frameCounter = $('frame-counter');
+const annotCount   = $('annotated-count');
+const sessionLabel = $('session-label');
+const btnPrev      = $('btn-prev');
+const btnNext      = $('btn-next');
+const btnAbsent    = $('btn-absent');
+const btnUndo      = $('btn-undo');
+const btnExport    = $('btn-export');
+const btnBack      = $('btn-back');
+const msgEl        = $('msg');
+
+// ── State ─────────────────────────────────────────────────────────────────
+const state = { current: 0, total: 0, annotations: [] };
+
+// ── Init ──────────────────────────────────────────────────────────────────
+async function init() {
+  // Lista de vídeos
+  const videos = await api('/api/videos');
+  videoSelect.innerHTML = videos.length
+    ? videos.map(v => `<option>${v}</option>`).join('')
+    : '<option value="">Nenhum .mp4/.mov/.avi em /videos</option>';
+
+  // Sessões salvas
+  const sessions = await api('/api/sessions');
+  if (sessions.length) {
+    sessionsList.innerHTML = '';
+    sessions.forEach(name => {
+      const btn = document.createElement('button');
+      btn.className   = 'session-btn';
+      btn.textContent = name;
+      btn.addEventListener('click', () => loadSession(name));
+      sessionsList.appendChild(btn);
+    });
+  }
+
+  // Sessão ativa no servidor (ex: reload de página)
+  const srv = await api('/api/state');
+  if (srv.loaded) {
+    applyServerState(srv);
+    showAnnotation(srv.name);
+    await seekTo(0);
+  }
+}
+
+// ── Extração de frames ────────────────────────────────────────────────────
+btnExtract.addEventListener('click', () => {
+  const video = videoSelect.value;
+  const fps   = parseFloat(fpsInput.value) || 30;
+  if (!video) return showMsg('Selecione um vídeo.');
+
+  btnExtract.disabled   = true;
+  progEl.style.display  = 'block';
+  prog.value = 0; prog.max = 100;
+  progText.textContent  = 'Iniciando…';
+
+  const src = new EventSource(`/api/extract?video=${encodeURIComponent(video)}&fps=${fps}`);
+
+  src.onmessage = async ({ data }) => {
+    const d = JSON.parse(data);
+    if (d.total)            { prog.max = d.total; }
+    if (d.frame !== undefined) {
+      prog.value = d.frame;
+      progText.textContent = `${d.frame} / ${prog.max} frames`;
+    }
+    if (d.done) {
+      src.close();
+      const srv = await api('/api/state');
+      applyServerState(srv);
+      progEl.style.display = 'none';
+      btnExtract.disabled  = false;
+      showAnnotation(srv.name);
+      await seekTo(0);
+    }
+    if (d.error) {
+      src.close();
+      showMsg('Erro ffmpeg: ' + d.error);
+      btnExtract.disabled = false;
+    }
+  };
+
+  src.onerror = () => {
+    src.close();
+    showMsg('Falha na conexão SSE.');
+    btnExtract.disabled = false;
+  };
+});
+
+// ── Carregar sessão salva ─────────────────────────────────────────────────
+async function loadSession(name) {
+  const r = await fetch('/api/session/load', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!r.ok) return showMsg('Sessão não encontrada.');
+  const srv = await api('/api/state');
+  applyServerState(srv);
+  showAnnotation(name);
+  await seekTo(0);
+}
+
+function applyServerState(srv) {
+  state.total       = srv.total;
+  state.annotations = srv.annotations;
+}
+
+// ── Transição de telas ────────────────────────────────────────────────────
+function showAnnotation(name) {
+  setupScreen.style.display = 'none';
+  annotScreen.style.display = 'flex';
+  sessionLabel.textContent  = name;
+  setControls(true);
+}
+
+btnBack.addEventListener('click', () => {
+  annotScreen.style.display = 'none';
+  setupScreen.style.display = 'flex';
+  init();
+});
+
+// ── Navegação entre frames ────────────────────────────────────────────────
+async function seekTo(idx) {
+  idx = Math.max(0, Math.min(idx, state.total - 1));
+  state.current = idx;
+  await frameCanvas.loadFrame(idx);
+  frameCanvas.setAnnotation(state.annotations[idx]);
+  updateUI();
+}
+
+function updateUI() {
+  const { current, total, annotations } = state;
+  frameCounter.textContent = `Frame ${current + 1} / ${total}`;
+  const done = annotations.filter(Boolean).length;
+  annotCount.textContent   = `${done} / ${total} anotados`;
+  btnPrev.disabled         = current === 0;
+  btnNext.disabled         = current === total - 1;
+  annStrip.update(annotations, current, total);
+}
+
+// ── Anotação ──────────────────────────────────────────────────────────────
+document.addEventListener('ball-marked', async ({ detail: { x, y } }) => {
+  await save(state.current, { visibility: 1, x, y });
+  showMsg(`Frame ${state.current + 1}: bola em (${x}, ${y})`);
+  if (state.current < state.total - 1) await seekTo(state.current + 1);
+});
+
+document.addEventListener('frame-seek', ({ detail: { index } }) => seekTo(index));
+
+btnAbsent.addEventListener('click', markAbsent);
+btnUndo.addEventListener('click',   undoFrame);
+btnPrev.addEventListener('click',   () => seekTo(state.current - 1));
+btnNext.addEventListener('click',   () => seekTo(state.current + 1));
+btnExport.addEventListener('click', () => { window.location = '/api/export'; });
+
+async function markAbsent() {
+  await save(state.current, { visibility: 0, x: null, y: null });
+  showMsg(`Frame ${state.current + 1}: ausente`);
+  if (state.current < state.total - 1) await seekTo(state.current + 1);
+}
+
+async function undoFrame() {
+  state.annotations[state.current] = null;
+  frameCanvas.setAnnotation(null);
+  await fetch(`/api/annotate/${state.current}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ visibility: null }),
+  });
+  updateUI();
+  showMsg(`Frame ${state.current + 1}: anotação removida`);
+}
+
+async function save(idx, ann) {
+  state.annotations[idx] = ann;
+  frameCanvas.setAnnotation(ann);
+  updateUI();
+  await fetch(`/api/annotate/${idx}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(ann),
+  });
+}
+
+// ── Teclado ───────────────────────────────────────────────────────────────
+document.addEventListener('keydown', async e => {
+  if (annotScreen.style.display === 'none') return;
+  if (['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName)) return;
+  if (e.code === 'ArrowRight') { e.preventDefault(); await seekTo(state.current + 1); }
+  if (e.code === 'ArrowLeft')  { e.preventDefault(); await seekTo(state.current - 1); }
+  if (e.code === 'Space')      { e.preventDefault(); await markAbsent(); }
+  if (e.code === 'KeyU')       { e.preventDefault(); await undoFrame(); }
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+async function api(url) {
+  const r = await fetch(url);
+  return r.json();
+}
+
+function showMsg(text) {
+  msgEl.textContent = text;
+  clearTimeout(showMsg._t);
+  showMsg._t = setTimeout(() => { msgEl.textContent = ''; }, 4000);
+}
+
+function setControls(on) {
+  [btnPrev, btnNext, btnAbsent, btnUndo].forEach(b => b.disabled = !on);
+}
+
+init();
+</script>
+</body>
+</html>

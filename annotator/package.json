@@ -1,0 +1,12 @@
+{
+  "name": "tracknet-annotator",
+  "version": "1.0.0",
+  "description": "Ferramenta de anotação de bola para fine-tuning do TrackNet",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

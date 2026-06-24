@@ -3,3 +3,7 @@ videos/
 weights/
 __pycache__/
 *.pyc
+
+# Anotador
+annotator/node_modules/
+annotator/sessions/

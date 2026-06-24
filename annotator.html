@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anotador de Bola - TrackNet</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: monospace; background: #1a1a1a; color: #e0e0e0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 16px; gap: 12px; }
+  h1 { font-size: 1rem; color: #aaa; letter-spacing: 2px; text-transform: uppercase; }
+
+  #setup { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; }
+  label { font-size: 0.8rem; color: #888; }
+  input[type="file"] { color: #e0e0e0; background: #2a2a2a; border: 1px solid #444; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 0.85rem; }
+  input[type="number"] { width: 60px; background: #2a2a2a; border: 1px solid #444; color: #e0e0e0; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 0.85rem; }
+  button { background: #333; border: 1px solid #555; color: #e0e0e0; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 0.85rem; transition: background 0.15s; }
+  button:hover:not(:disabled) { background: #444; }
+  button:disabled { opacity: 0.35; cursor: default; }
+  button.primary { background: #1a4a8a; border-color: #2a6aaa; }
+  button.primary:hover:not(:disabled) { background: #2a5a9a; }
+  button.danger { background: #5a1a1a; border-color: #8a2a2a; }
+  button.danger:hover:not(:disabled) { background: #6a2a2a; }
+  button.success { background: #1a5a2a; border-color: #2a7a3a; }
+  button.success:hover:not(:disabled) { background: #2a6a3a; }
+
+  #canvas-wrapper { position: relative; width: 100%; max-width: 960px; background: #000; border: 2px solid #333; border-radius: 4px; overflow: hidden; cursor: crosshair; }
+  canvas { display: block; width: 100%; height: auto; }
+
+  #status-bar { width: 100%; max-width: 960px; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: #888; }
+  #frame-counter { font-size: 0.9rem; color: #e0e0e0; }
+  #annotated-counter { color: #4a9a5a; }
+
+  #progress-bar { width: 100%; max-width: 960px; height: 8px; background: #2a2a2a; border-radius: 4px; overflow: hidden; cursor: pointer; position: relative; }
+  #progress-fill { height: 100%; background: #1a6aaa; width: 0%; transition: width 0.1s; }
+  #progress-dots { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
+  #controls { display: flex; gap: 8px; align-items: center; }
+  #hint { font-size: 0.75rem; color: #555; }
+
+  #msg { font-size: 0.8rem; color: #f0c040; min-height: 1.2em; }
+
+  video { display: none; }
+</style>
+</head>
+<body>
+
+<h1>TrackNet · Anotador de Bola</h1>
+
+<div id="setup">
+  <label>Vídeo:</label>
+  <input type="file" id="file-input" accept="video/*">
+  <label>FPS anotação:</label>
+  <input type="number" id="fps-input" value="5" min="1" max="60">
+  <button id="btn-load" class="primary">Carregar</button>
+</div>
+
+<div id="canvas-wrapper">
+  <canvas id="canvas"></canvas>
+</div>
+
+<div id="status-bar">
+  <span id="frame-counter">— / —</span>
+  <span id="annotated-counter">Anotados: 0 / 0</span>
+</div>
+
+<div id="progress-bar" title="Clique para navegar">
+  <div id="progress-fill"></div>
+  <canvas id="progress-dots"></canvas>
+</div>
+
+<div id="controls">
+  <button id="btn-prev" disabled>◀ Anterior</button>
+  <button id="btn-absent" class="danger" disabled>✕ Ausente (Espaço)</button>
+  <button id="btn-next" class="primary" disabled>Próximo ▶</button>
+  <button id="btn-undo" disabled>↩ Desfazer</button>
+  <button id="btn-export" class="success" disabled>⬇ Baixar CSV</button>
+</div>
+
+<div id="hint">Clique no canvas para marcar a bola · ← → para navegar · Espaço = ausente · U = desfazer</div>
+<div id="msg"></div>
+
+<video id="video" preload="auto"></video>
+
+<script>
+class BallAnnotator extends HTMLElement {
+  constructor() { super(); }
+}
+
+// ── State ──────────────────────────────────────────────────────────────────
+const state = {
+  timestamps: [],      // float[] — one per annotation frame
+  annotations: [],     // { visibility, x, y } | null per frame
+  current: 0,
+  total: 0,
+  videoW: 0,
+  videoH: 0,
+  loaded: false,
+};
+
+// ── Elements ───────────────────────────────────────────────────────────────
+const fileInput   = document.getElementById('file-input');
+const fpsInput    = document.getElementById('fps-input');
+const btnLoad     = document.getElementById('btn-load');
+const canvas      = document.getElementById('canvas');
+const ctx         = canvas.getContext('2d');
+const progressBar = document.getElementById('progress-bar');
+const progressFill= document.getElementById('progress-fill');
+const progressDots= document.getElementById('progress-dots');
+const pCtx        = progressDots.getContext('2d');
+const frameCounter= document.getElementById('frame-counter');
+const annotCounter= document.getElementById('annotated-counter');
+const btnPrev     = document.getElementById('btn-prev');
+const btnNext     = document.getElementById('btn-next');
+const btnAbsent   = document.getElementById('btn-absent');
+const btnUndo     = document.getElementById('btn-undo');
+const btnExport   = document.getElementById('btn-export');
+const msgEl       = document.getElementById('msg');
+const video       = document.getElementById('video');
+
+// ── Load video ─────────────────────────────────────────────────────────────
+btnLoad.addEventListener('click', () => {
+  const file = fileInput.files[0];
+  if (!file) { showMsg('Selecione um arquivo de vídeo.'); return; }
+  const fps = parseFloat(fpsInput.value) || 5;
+  video.src = URL.createObjectURL(file);
+  video.load();
+  showMsg('Carregando vídeo…');
+});
+
+video.addEventListener('loadedmetadata', () => {
+  const fps = parseFloat(fpsInput.value) || 5;
+  const duration = video.duration;
+  const interval = 1 / fps;
+
+  state.timestamps = [];
+  for (let t = 0; t < duration; t += interval) {
+    state.timestamps.push(parseFloat(t.toFixed(4)));
+  }
+  state.total = state.timestamps.length;
+  state.annotations = new Array(state.total).fill(null);
+  state.current = 0;
+  state.loaded = true;
+  state.videoW = video.videoWidth;
+  state.videoH = video.videoHeight;
+
+  canvas.width  = state.videoW;
+  canvas.height = state.videoH;
+  progressDots.width  = progressBar.clientWidth;
+  progressDots.height = 8;
+
+  setControls(true);
+  seekTo(0);
+  showMsg(`${state.total} frames a ${fps} fps · ${state.videoW}×${state.videoH}`);
+});
+
+// ── Seek & render ──────────────────────────────────────────────────────────
+function seekTo(idx) {
+  if (!state.loaded) return;
+  state.current = Math.max(0, Math.min(idx, state.total - 1));
+  video.currentTime = state.timestamps[state.current];
+}
+
+video.addEventListener('seeked', () => {
+  ctx.drawImage(video, 0, 0);
+  drawOverlay();
+  updateUI();
+});
+
+function drawOverlay() {
+  const ann = state.annotations[state.current];
+  if (!ann || ann.visibility === 0) return;
+  const cw = canvas.width, ch = canvas.height;
+  ctx.save();
+  ctx.strokeStyle = '#ff3333';
+  ctx.lineWidth = Math.max(2, cw / 320);
+  ctx.beginPath();
+  ctx.arc(ann.x, ann.y, Math.max(8, cw / 80), 0, Math.PI * 2);
+  ctx.stroke();
+  // crosshair
+  const r = Math.max(14, cw / 50);
+  ctx.beginPath();
+  ctx.moveTo(ann.x - r, ann.y); ctx.lineTo(ann.x + r, ann.y);
+  ctx.moveTo(ann.x, ann.y - r); ctx.lineTo(ann.x, ann.y + r);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function updateUI() {
+  const c = state.current, t = state.total;
+  frameCounter.textContent = `Frame ${c + 1} / ${t}`;
+  const annotated = state.annotations.filter(a => a !== null).length;
+  annotCounter.textContent = `Anotados: ${annotated} / ${t}`;
+  progressFill.style.width = `${((c + 1) / t) * 100}%`;
+  btnPrev.disabled  = c === 0;
+  btnNext.disabled  = c === t - 1;
+  drawProgressDots();
+}
+
+function drawProgressDots() {
+  const w = progressDots.width, h = progressDots.height;
+  pCtx.clearRect(0, 0, w, h);
+  const t = state.total;
+  state.annotations.forEach((ann, i) => {
+    if (ann === null) return;
+    const x = Math.round((i / t) * w);
+    pCtx.fillStyle = ann.visibility === 1 ? '#4af060' : '#f04040';
+    pCtx.fillRect(x, 0, Math.max(1, Math.floor(w / t)), h);
+  });
+}
+
+// ── Canvas click ───────────────────────────────────────────────────────────
+canvas.addEventListener('click', (e) => {
+  if (!state.loaded) return;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width  / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const x = Math.round((e.clientX - rect.left) * scaleX);
+  const y = Math.round((e.clientY - rect.top)  * scaleY);
+  state.annotations[state.current] = { visibility: 1, x, y };
+  ctx.drawImage(video, 0, 0);
+  drawOverlay();
+  updateUI();
+  showMsg(`Frame ${state.current + 1}: bola em (${x}, ${y})`);
+  if (state.current < state.total - 1) seekTo(state.current + 1);
+});
+
+// ── Controls ───────────────────────────────────────────────────────────────
+btnPrev.addEventListener('click', () => seekTo(state.current - 1));
+btnNext.addEventListener('click', () => seekTo(state.current + 1));
+
+btnAbsent.addEventListener('click', markAbsent);
+function markAbsent() {
+  if (!state.loaded) return;
+  state.annotations[state.current] = { visibility: 0, x: null, y: null };
+  ctx.drawImage(video, 0, 0);
+  updateUI();
+  showMsg(`Frame ${state.current + 1}: ausente`);
+  if (state.current < state.total - 1) seekTo(state.current + 1);
+}
+
+btnUndo.addEventListener('click', undoLast);
+function undoLast() {
+  if (!state.loaded) return;
+  state.annotations[state.current] = null;
+  ctx.drawImage(video, 0, 0);
+  updateUI();
+  showMsg(`Frame ${state.current + 1}: anotação removida`);
+}
+
+// ── Progress bar click navigation ─────────────────────────────────────────
+progressBar.addEventListener('click', (e) => {
+  if (!state.loaded) return;
+  const rect = progressBar.getBoundingClientRect();
+  const ratio = (e.clientX - rect.left) / rect.width;
+  seekTo(Math.round(ratio * (state.total - 1)));
+});
+
+// ── Keyboard ───────────────────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (!state.loaded) return;
+  if (e.target.tagName === 'INPUT') return;
+  switch (e.code) {
+    case 'ArrowRight': e.preventDefault(); seekTo(state.current + 1); break;
+    case 'ArrowLeft':  e.preventDefault(); seekTo(state.current - 1); break;
+    case 'Space':      e.preventDefault(); markAbsent(); break;
+    case 'KeyU':       e.preventDefault(); undoLast(); break;
+  }
+});
+
+// ── Export CSV ─────────────────────────────────────────────────────────────
+btnExport.addEventListener('click', () => {
+  const rows = ['file name,visibility,x-coordinate,y-coordinate,status'];
+  state.annotations.forEach((ann, i) => {
+    const name = String(i).padStart(4, '0') + '.jpg';
+    if (!ann) {
+      rows.push(`${name},0,,,0`);
+    } else if (ann.visibility === 0) {
+      rows.push(`${name},0,,,0`);
+    } else {
+      rows.push(`${name},1,${ann.x},${ann.y},0`);
+    }
+  });
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'Label.csv';
+  a.click();
+  showMsg('Label.csv baixado.');
+});
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function setControls(enabled) {
+  [btnPrev, btnNext, btnAbsent, btnUndo, btnExport].forEach(b => b.disabled = !enabled);
+}
+
+function showMsg(text) {
+  msgEl.textContent = text;
+}
+
+window.addEventListener('resize', () => {
+  if (!state.loaded) return;
+  progressDots.width = progressBar.clientWidth;
+  drawProgressDots();
+});
+</script>
+</body>
+</html>
