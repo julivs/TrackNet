@@ -119,7 +119,7 @@ frame-canvas {
   display: block; width: 100%; background: #000;
   border: 2px solid var(--border); border-radius: var(--radius);
   overflow: hidden;
-  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='11' stroke='%23ff4444' stroke-width='1.5' fill='none'/%3E%3Cline x1='16' y1='1' x2='16' y2='4' stroke='%23ff4444' stroke-width='1.5'/%3E%3Cline x1='16' y1='28' x2='16' y2='31' stroke='%23ff4444' stroke-width='1.5'/%3E%3Cline x1='1' y1='16' x2='4' y2='16' stroke='%23ff4444' stroke-width='1.5'/%3E%3Cline x1='28' y1='16' x2='31' y2='16' stroke='%23ff4444' stroke-width='1.5'/%3E%3C/svg%3E") 16 16, crosshair;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='7' stroke='%23ff4444' stroke-width='1.5' fill='none'/%3E%3Cline x1='16' y1='5' x2='16' y2='8' stroke='%23ff4444' stroke-width='1.5'/%3E%3Cline x1='16' y1='24' x2='16' y2='27' stroke='%23ff4444' stroke-width='1.5'/%3E%3Cline x1='5' y1='16' x2='8' y2='16' stroke='%23ff4444' stroke-width='1.5'/%3E%3Cline x1='24' y1='16' x2='27' y2='16' stroke='%23ff4444' stroke-width='1.5'/%3E%3C/svg%3E") 16 16, crosshair;
 }
 frame-canvas canvas { display: block; width: 100%; height: auto; }
 
@@ -224,7 +224,7 @@ annotation-strip canvas { display: block; width: 100%; height: 100%; }
     <button id="btn-undo"   disabled>↩ Desfazer</button>
   </div>
 
-  <div id="hint">← → navegar &nbsp;·&nbsp; Espaço = ausente &nbsp;·&nbsp; X = marcar bola &nbsp;·&nbsp; U = desfazer &nbsp;·&nbsp; Clique no frame = marcar bola</div>
+  <div id="hint">, . navegar &nbsp;·&nbsp; ←↑↓→ mover cursor (Shift = ×10) &nbsp;·&nbsp; X = marcar bola &nbsp;·&nbsp; Espaço = ausente &nbsp;·&nbsp; U = desfazer</div>
   <div id="msg"></div>
 
   <div id="crop-section">
@@ -263,6 +263,7 @@ class FrameCanvas extends HTMLElement {
     this._gen = 0;
     this._img = null;
     this._ann = null;
+    this._kbMode = false;
   }
 
   connectedCallback() {
@@ -270,8 +271,13 @@ class FrameCanvas extends HTMLElement {
     this.ctx    = this.canvas.getContext('2d');
     this.appendChild(this.canvas);
     this.canvas.addEventListener('click',     e => this._onClick(e));
-    this.canvas.addEventListener('mousemove', e => this._cursorPos = this._toCanvas(e));
-    this.canvas.addEventListener('mouseleave',    () => this._cursorPos = null);
+    this.canvas.addEventListener('mousemove', e => {
+      const wasKb = this._kbMode;
+      this._cursorPos = this._toCanvas(e);
+      this._kbMode = false;
+      if (wasKb) this._render();
+    });
+    this.canvas.addEventListener('mouseleave', () => { this._cursorPos = null; this._kbMode = false; });
   }
 
   // Retorna true se este load foi o mais recente (não stale).
@@ -305,6 +311,31 @@ class FrameCanvas extends HTMLElement {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(this._img, 0, 0);
     this._drawMarker();
+    if (this._kbMode && this._cursorPos) this._drawCursorOverlay();
+  }
+
+  _drawCursorOverlay() {
+    const { ctx, canvas } = this;
+    const { x, y } = this._cursorPos;
+    const r    = Math.max(4, canvas.width / 180);
+    const lw   = Math.max(1, canvas.width / 600);
+    const gap  = Math.max(1, canvas.width / 700);
+    const tick = Math.max(2, canvas.width / 350);
+    ctx.save();
+    ctx.strokeStyle = '#ff4444';
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+    const inner = r + gap;
+    const outer = r + gap + tick;
+    ctx.beginPath();
+    ctx.moveTo(x, y - outer); ctx.lineTo(x, y - inner);
+    ctx.moveTo(x, y + inner); ctx.lineTo(x, y + outer);
+    ctx.moveTo(x - outer, y); ctx.lineTo(x - inner, y);
+    ctx.moveTo(x + inner, y); ctx.lineTo(x + outer, y);
+    ctx.stroke();
+    ctx.restore();
   }
 
   _drawMarker() {
@@ -325,6 +356,19 @@ class FrameCanvas extends HTMLElement {
   markAtCursor() {
     if (!this._cursorPos) return;
     this.dispatchEvent(new CustomEvent('ball-marked', { bubbles: true, detail: this._cursorPos }));
+  }
+
+  moveCursor(dx, dy) {
+    if (!this.canvas.width) return;
+    if (!this._cursorPos) {
+      this._cursorPos = { x: Math.round(this.canvas.width / 2), y: Math.round(this.canvas.height / 2) };
+    }
+    this._cursorPos = {
+      x: Math.max(0, Math.min(this.canvas.width  - 1, this._cursorPos.x + dx)),
+      y: Math.max(0, Math.min(this.canvas.height - 1, this._cursorPos.y + dy)),
+    };
+    this._kbMode = true;
+    this._render();
   }
 
   _onClick(e) {
@@ -663,8 +707,13 @@ async function save(idx, ann) {
 document.addEventListener('keydown', async e => {
   if (annotScreen.style.display === 'none') return;
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
-  if (e.code === 'ArrowRight') { e.preventDefault(); await seekTo(state.current + 1); }
-  if (e.code === 'ArrowLeft')  { e.preventDefault(); await seekTo(state.current - 1); }
+  const step = e.shiftKey ? 10 : 1;
+  if (e.code === 'Period')     { e.preventDefault(); await seekTo(state.current + 1); }
+  if (e.code === 'Comma')      { e.preventDefault(); await seekTo(state.current - 1); }
+  if (e.code === 'ArrowRight') { e.preventDefault(); frameCanvas.moveCursor(step, 0); }
+  if (e.code === 'ArrowLeft')  { e.preventDefault(); frameCanvas.moveCursor(-step, 0); }
+  if (e.code === 'ArrowDown')  { e.preventDefault(); frameCanvas.moveCursor(0, step); }
+  if (e.code === 'ArrowUp')    { e.preventDefault(); frameCanvas.moveCursor(0, -step); }
   if (e.code === 'Space')      { e.preventDefault(); await markAbsent(); }
   if (e.code === 'KeyU')       { e.preventDefault(); await undoFrame(); }
   if (e.code === 'KeyX')       { e.preventDefault(); frameCanvas.markAtCursor(); }
